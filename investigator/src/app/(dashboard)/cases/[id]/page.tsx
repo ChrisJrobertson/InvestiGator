@@ -12,6 +12,18 @@ import {
   updateFinding,
   verifyFinding,
 } from "@/lib/actions/findings";
+import {
+  approveReport,
+  exportReportPdf,
+  exportReportWord,
+  generateReport,
+  getReport,
+  listReports,
+  regenerateReport,
+  updateReport,
+} from "@/lib/actions/reports";
+import { ReportToolbar } from "@/components/reports/report-toolbar";
+import { ReportViewer } from "@/components/reports/report-viewer";
 import { formatCurrencyFromPence } from "@/lib/utils";
 import { redirect } from "next/navigation";
 
@@ -21,7 +33,12 @@ export default async function CaseDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [currentCase, findings] = await Promise.all([getCase(id), listFindings(id)]);
+  const [currentCase, findings, reports] = await Promise.all([
+    getCase(id),
+    listFindings(id),
+    listReports(id),
+  ]);
+  const latestReport = reports[0] ? await getReport(reports[0].id) : null;
 
   async function downloadFileAction(formData: FormData) {
     "use server";
@@ -29,6 +46,49 @@ export default async function CaseDetailPage({
     if (!fileId) return;
     const url = await createEvidenceDownloadUrl(fileId);
     redirect(url);
+  }
+
+  async function generateReportAction(formData: FormData) {
+    "use server";
+    const reportType = String(formData.get("report_type") ?? "FULL_INVESTIGATION");
+    await generateReport(id, reportType as Parameters<typeof generateReport>[1]);
+  }
+
+  async function regenerateReportAction(formData: FormData) {
+    "use server";
+    const reportType = String(formData.get("report_type") ?? "FULL_INVESTIGATION");
+    await regenerateReport(id, reportType as Parameters<typeof regenerateReport>[1]);
+  }
+
+  async function approveReportAction(formData: FormData) {
+    "use server";
+    const reportId = String(formData.get("report_id") ?? "");
+    if (!reportId) return;
+    await approveReport(reportId);
+  }
+
+  async function exportPdfAction(formData: FormData) {
+    "use server";
+    const reportId = String(formData.get("report_id") ?? "");
+    if (!reportId) return;
+    const url = await exportReportPdf(reportId);
+    redirect(url);
+  }
+
+  async function exportWordAction(formData: FormData) {
+    "use server";
+    const reportId = String(formData.get("report_id") ?? "");
+    if (!reportId) return;
+    const url = await exportReportWord(reportId);
+    redirect(url);
+  }
+
+  async function updateReportAction(formData: FormData) {
+    "use server";
+    const reportId = String(formData.get("report_id") ?? "");
+    const content = String(formData.get("content") ?? "");
+    if (!reportId || !content.trim()) return;
+    await updateReport(reportId, content);
   }
 
   return (
@@ -64,6 +124,86 @@ export default async function CaseDetailPage({
         <p className="text-sm text-[var(--text-muted)]">
           {currentCase.description || "No description provided."}
         </p>
+      </section>
+
+      <section className="mt-6 rounded-md border border-[var(--border)] bg-[var(--surface)] p-4">
+        <h2 className="mb-3 text-lg font-semibold">Reports</h2>
+        <form action={generateReportAction} className="mb-3 flex flex-wrap gap-2">
+          <select
+            name="report_type"
+            className="h-10 rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 text-sm"
+            defaultValue="FULL_INVESTIGATION"
+          >
+            <option value="FULL_INVESTIGATION">Full Investigation</option>
+            <option value="SURVEILLANCE">Surveillance</option>
+            <option value="DUE_DILIGENCE">Due Diligence</option>
+            <option value="BACKGROUND_CHECK">Background Check</option>
+            <option value="OSINT_INTELLIGENCE">OSINT Intelligence</option>
+            <option value="INTERIM_UPDATE">Interim Update</option>
+            <option value="EXECUTIVE_SUMMARY">Executive Summary</option>
+          </select>
+          <Button type="submit">Generate report</Button>
+        </form>
+        <p className="mb-4 text-xs text-[var(--text-muted)]">
+          Generating report... this may take 15–30 seconds
+        </p>
+
+        {!reports.length ? (
+          <p className="text-sm text-[var(--text-muted)]">No reports generated yet.</p>
+        ) : (
+          <>
+            <div className="mb-4 flex flex-wrap gap-2">
+              {reports.map((report) => (
+                <Badge key={report.id}>
+                  v{report.version} · {report.status}
+                </Badge>
+              ))}
+            </div>
+
+            {latestReport ? (
+              <div className="space-y-3">
+                <ReportToolbar />
+                <div className="flex flex-wrap gap-2">
+                  <form action={regenerateReportAction}>
+                    <input type="hidden" name="report_type" value={latestReport.report_type} />
+                    <Button type="submit">Regenerate</Button>
+                  </form>
+                  <form action={approveReportAction}>
+                    <input type="hidden" name="report_id" value={latestReport.id} />
+                    <Button type="submit" variant="ghost">
+                      Approve
+                    </Button>
+                  </form>
+                  <form action={exportPdfAction}>
+                    <input type="hidden" name="report_id" value={latestReport.id} />
+                    <Button type="submit" variant="ghost">
+                      Export PDF
+                    </Button>
+                  </form>
+                  <form action={exportWordAction}>
+                    <input type="hidden" name="report_id" value={latestReport.id} />
+                    <Button type="submit" variant="ghost">
+                      Export Word
+                    </Button>
+                  </form>
+                </div>
+                <ReportViewer markdown={latestReport.content} />
+                <form action={updateReportAction} className="space-y-2">
+                  <input type="hidden" name="report_id" value={latestReport.id} />
+                  <textarea
+                    name="content"
+                    defaultValue={latestReport.content}
+                    rows={12}
+                    className="w-full rounded-md border border-[var(--border)] bg-[var(--surface)] p-3 text-sm"
+                  />
+                  <Button type="submit" variant="ghost">
+                    Save edited report
+                  </Button>
+                </form>
+              </div>
+            ) : null}
+          </>
+        )}
       </section>
 
       <section className="mt-6 rounded-md border border-[var(--border)] bg-[var(--surface)] p-4">

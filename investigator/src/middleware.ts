@@ -43,6 +43,28 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
+  if (!pathname.startsWith("/onboarding")) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("organisation_id")
+      .eq("id", user.id)
+      .single();
+
+    if (profile?.organisation_id) {
+      const { data: organisation } = await supabase
+        .from("organisations")
+        .select("onboarding_completed")
+        .eq("id", profile.organisation_id)
+        .single();
+
+      if (organisation && organisation.onboarding_completed === false) {
+        const url = request.nextUrl.clone();
+        url.pathname = "/onboarding";
+        return NextResponse.redirect(url);
+      }
+    }
+  }
+
   return response;
 }
 

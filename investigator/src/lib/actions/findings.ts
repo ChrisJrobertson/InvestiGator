@@ -21,6 +21,9 @@ export type FindingListItem = {
     file_type: string;
     file_size: number;
     storage_path: string;
+    ocr_text: string | null;
+    ai_description: string | null;
+    transcription: string | null;
   }>;
 };
 
@@ -41,7 +44,7 @@ export async function listFindings(caseId: string): Promise<FindingListItem[]> {
   const ids = findingRows.map((item) => item.id);
   const { data: files, error: filesError } = await supabase
     .from("evidence_files")
-    .select("id, finding_id, file_name, file_type, file_size, storage_path")
+    .select("id, finding_id, file_name, file_type, file_size, storage_path, ocr_text, ai_description, transcription")
     .in("finding_id", ids)
     .is("deleted_at", null)
     .order("created_at", { ascending: true });
@@ -56,6 +59,9 @@ export async function listFindings(caseId: string): Promise<FindingListItem[]> {
       file_type: file.file_type,
       file_size: Number(file.file_size),
       storage_path: file.storage_path,
+      ocr_text: file.ocr_text,
+      ai_description: file.ai_description,
+      transcription: file.transcription,
     });
     filesByFinding.set(file.finding_id, list);
   }

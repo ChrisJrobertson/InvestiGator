@@ -3,6 +3,15 @@ import { PageWrapper } from "@/components/layout/page-wrapper";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { getAiUsage } from "@/lib/ai-credits";
+import { getCurrentProfile } from "@/lib/actions/audit";
+import {
+  describeEvidenceImage,
+  extractTextFromFile,
+  removeBackground,
+  searchCaseEvidence,
+  transcribeAudio,
+} from "@/lib/actions/ai-evidence";
 import { getCase } from "@/lib/actions/cases";
 import { createEvidenceDownloadUrl } from "@/lib/actions/evidence-files";
 import {
@@ -25,6 +34,7 @@ import {
 import { createExpense, deleteExpense, listExpenses } from "@/lib/actions/expenses";
 import { generateInvoice, generateInvoicePdf, listInvoices } from "@/lib/actions/invoices";
 import { createTimeEntry, deleteTimeEntry, listTimeEntries } from "@/lib/actions/time-entries";
+import { generatePortalLink, listPortalLinks, revokePortalLink } from "@/lib/actions/portal";
 import { ReportToolbar } from "@/components/reports/report-toolbar";
 import { ReportViewer } from "@/components/reports/report-viewer";
 import { formatCurrencyFromPence } from "@/lib/utils";
@@ -32,14 +42,19 @@ import { redirect } from "next/navigation";
 
 export default async function CaseDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ q?: string; evidence_q?: string }>;
 }) {
   const { id } = await params;
-  const [currentCase, findings, reports] = await Promise.all([
+  const query = await searchParams;
+  const profile = await getCurrentProfile();
+  const [currentCase, findings, reports, portalLinks] = await Promise.all([
     getCase(id),
     listFindings(id),
     listReports(id),
+    listPortalLinks(id),
   ]);
   const [{ rows: timeEntries }, { rows: expenses }, invoices] = await Promise.all([
     listTimeEntries(id),
@@ -48,6 +63,15 @@ export default async function CaseDetailPage({
   ]);
   const caseInvoices = invoices.filter((invoice) => invoice.case_id === id);
   const latestReport = reports[0] ? await getReport(reports[0].id) : null;
+  const aiUsage = await getAiUsage(profile.organisation_id);
+  const evidenceQuery = query.evidence_q?.trim() ?? "";
+  const evidenceResults = (evidenceQuery
+    ? await searchCaseEvidence(id, evidenceQuery)
+    : []) as Array<{
+    source_type: string;
+    source_id: string;
+    snippet: string;
+  }>;
 
   async function downloadFileAction(formData: FormData) {
     "use server";
@@ -114,6 +138,80 @@ export default async function CaseDetailPage({
     const url = await generateInvoicePdf(invoiceId);
     redirect(url);
   }
+
+  async function extractTextAction(formData: FormData) {
+    "use server";
+    const fileId = String(formData.get("file_id") ?? "");
+    if (!fileId) return;
+    await extractTextFromFile(fileId);
+  }
+
+  async function describeImageAction(formData: FormData) {
+    "use server";
+    const fileId = String(formData.get("file_id") ?? "");
+    if (!fileId) return;
+    await describeEvidenceImage(fileId);
+  }
+
+  async function transcribeAction(formData: FormData) {
+    "use server";
+    const fileId = String(formData.get("file_id") ?? "");
+    if (!fileId) return;
+    await transcribeAudio(fileId);
+  }
+
+  async function removeBackgroundAction(formData: FormData) {
+    "use server";
+    const fileId = String(formData.get("file_id") ?? "");
+    if (!fileId) return;
+    await removeBackground(fileId);
+  }
+
+  async function batchOcrAction() {
+    "use server";
+    const currentFindings = await listFindings(id);
+    const files = currentFindings.flatMap((finding) =>
+      finding.files.filter(
+        (file) =>
+          !file.ocr_text &&
+          (file.file_type.startsWith("image/") || file.file_type === "application/pdf"),
+      ),
+    );
+    for (const file of files) {
+      await extractTextFromFile(file.id);
+    }
+  }
+
+  async function batchTranscribeAction() {
+    "use server";
+    const currentFindings = await listFindings(id);
+    const files = currentFindings.flatMap((finding) =>
+      finding.files.filter(
+        (file) =>
+          !file.transcription &&
+          (file.file_type.startsWith("audio/") || file.file_type.startsWith("video/")),
+      ),
+    );
+    for (const file of files) {
+      await transcribeAudio(file.id);
+    }
+  }
+
+  async function generatePortalAction(formData: FormData) {
+    "use server";
+    const expiryDays = Number(formData.get("expiry_days") ?? 14);
+    await generatePortalLink(id, Number.isFinite(expiryDays) ? expiryDays : 14);
+  }
+
+  async function revokePortalAction(formData: FormData) {
+    "use server";
+    const portalId = String(formData.get("portal_id") ?? "");
+    if (!portalId) return;
+    await revokePortalLink(portalId);
+  }
+
+  const osintSearchTerm = query.q || currentCase.title;
+  const encodedTerm = encodeURIComponent(osintSearchTerm);
 
   return (
     <PageWrapper>
@@ -231,6 +329,94 @@ export default async function CaseDetailPage({
       </section>
 
       <section className="mt-6 rounded-md border border-[var(--border)] bg-[var(--surface)] p-4">
+        <h2 className="mb-3 text-lg font-semibold">Client Portal</h2>
+        <form action={generatePortalAction} className="mb-3 flex flex-wrap items-end gap-2">
+          <div>
+            <label className="mb-1 block text-xs text-[var(--text-muted)]">Expiry (days)</label>
+            <Input name="expiry_days" type="number" defaultValue="14" />
+          </div>
+          <Button type="submit">Share with Client</Button>
+        </form>
+        {!portalLinks.length ? (
+          <p className="text-xs text-[var(--text-muted)]">No active portal links.</p>
+        ) : (
+          <ul className="space-y-2">
+            {portalLinks.map((link) => (
+              <li
+                key={link.id}
+                className="flex items-center justify-between rounded border border-[var(--border)] px-3 py-2 text-xs"
+              >
+                <span className="mono">
+                  /portal/{link.token} · expires {new Date(link.expires_at).toLocaleDateString("en-GB")}
+                </span>
+                {link.revoked_at ? (
+                  <Badge>Revoked</Badge>
+                ) : (
+                  <form action={revokePortalAction}>
+                    <input type="hidden" name="portal_id" value={link.id} />
+                    <Button type="submit" variant="danger">
+                      Revoke
+                    </Button>
+                  </form>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="mt-6 rounded-md border border-[var(--border)] bg-[var(--surface)] p-4">
+        <h2 className="mb-3 text-lg font-semibold">AI Tools</h2>
+        <p className="mb-3 text-sm text-[var(--text-muted)]">
+          Credits: {aiUsage.used}/{Number.isFinite(aiUsage.limit) ? aiUsage.limit : "∞"} this month
+        </p>
+        <div className="mb-4 h-2 rounded bg-[var(--surface-light)]">
+          <div
+            className="h-2 rounded bg-[var(--accent)]"
+            style={{
+              width: `${
+                Number.isFinite(aiUsage.limit) && aiUsage.limit > 0
+                  ? Math.min(100, Math.round((aiUsage.used / aiUsage.limit) * 100))
+                  : 0
+              }%`,
+            }}
+          />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <form action={batchOcrAction}>
+            <Button type="submit" variant="ghost">
+              Batch OCR
+            </Button>
+          </form>
+          <form action={batchTranscribeAction}>
+            <Button type="submit" variant="ghost">
+              Batch Transcribe
+            </Button>
+          </form>
+        </div>
+      </section>
+
+      <section className="mt-6 rounded-md border border-[var(--border)] bg-[var(--surface)] p-4">
+        <h2 className="mb-3 text-lg font-semibold">OSINT Tools</h2>
+        <form className="mb-3 flex gap-2">
+          <Input name="q" defaultValue={osintSearchTerm} placeholder="Search term" />
+          <Button type="submit" variant="ghost">
+            Update
+          </Button>
+        </form>
+        <div className="grid gap-2 md:grid-cols-2">
+          <a className="rounded border border-[var(--border)] px-3 py-2 text-xs" href={`https://find-and-update.company-information.service.gov.uk/search?q=${encodedTerm}`} target="_blank" rel="noreferrer">Companies House</a>
+          <a className="rounded border border-[var(--border)] px-3 py-2 text-xs" href="https://search-property-information.service.gov.uk/" target="_blank" rel="noreferrer">Land Registry</a>
+          <a className="rounded border border-[var(--border)] px-3 py-2 text-xs" href="https://www.192.com/" target="_blank" rel="noreferrer">Electoral Roll</a>
+          <a className="rounded border border-[var(--border)] px-3 py-2 text-xs" href="https://www.courtserve.net/" target="_blank" rel="noreferrer">Court records</a>
+          <a className="rounded border border-[var(--border)] px-3 py-2 text-xs" href="https://www.thegazette.co.uk/" target="_blank" rel="noreferrer">Gazette</a>
+          <a className="rounded border border-[var(--border)] px-3 py-2 text-xs" href={`https://www.linkedin.com/search/results/people/?keywords=${encodedTerm}`} target="_blank" rel="noreferrer">LinkedIn</a>
+          <a className="rounded border border-[var(--border)] px-3 py-2 text-xs" href={`https://www.facebook.com/search/people/?q=${encodedTerm}`} target="_blank" rel="noreferrer">Facebook</a>
+          <a className="rounded border border-[var(--border)] px-3 py-2 text-xs" href={`https://www.google.co.uk/search?q=${encodedTerm}`} target="_blank" rel="noreferrer">Google</a>
+        </div>
+      </section>
+
+      <section id="add-finding" className="mt-6 rounded-md border border-[var(--border)] bg-[var(--surface)] p-4">
         <h2 className="mb-3 text-lg font-semibold">Add Finding</h2>
         <form action={createFinding} encType="multipart/form-data" className="grid gap-3 md:grid-cols-2">
           <input type="hidden" name="case_id" value={id} />
@@ -377,6 +563,34 @@ export default async function CaseDetailPage({
 
       <section className="mt-6">
         <h2 className="mb-3 text-lg font-semibold">Findings Timeline</h2>
+        <form className="mb-3 flex gap-2">
+          <Input
+            name="evidence_q"
+            defaultValue={evidenceQuery}
+            placeholder="Search findings, OCR, transcription, and AI descriptions"
+          />
+          <Button type="submit" variant="ghost">
+            Search
+          </Button>
+        </form>
+        {evidenceQuery ? (
+          <div className="mb-4 rounded border border-[var(--border)] bg-[var(--surface)] p-3">
+            <p className="mb-2 text-xs text-[var(--text-muted)]">
+              Evidence search results for: <span className="mono">{evidenceQuery}</span>
+            </p>
+            {!evidenceResults.length ? (
+              <p className="text-xs text-[var(--text-muted)]">No matches found.</p>
+            ) : (
+              <ul className="space-y-1">
+                {evidenceResults.map((result, index) => (
+                  <li key={`${result.source_type}-${result.source_id}-${index}`} className="text-xs">
+                    <span className="mono text-[var(--accent)]">{result.source_type}</span> · {result.snippet}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ) : null}
         {!findings.length ? (
           <p className="text-sm text-[var(--text-muted)]">
             No evidence recorded — add your first finding.
@@ -415,10 +629,49 @@ export default async function CaseDetailPage({
                             Download
                           </Button>
                         </form>
+                        {(file.file_type.startsWith("image/") || file.file_type === "application/pdf") && (
+                          <form action={extractTextAction}>
+                            <input type="hidden" name="file_id" value={file.id} />
+                            <Button variant="ghost" type="submit">
+                              Extract Text (AI)
+                            </Button>
+                          </form>
+                        )}
+                        {file.file_type.startsWith("image/") && (
+                          <>
+                            <form action={describeImageAction}>
+                              <input type="hidden" name="file_id" value={file.id} />
+                              <Button variant="ghost" type="submit">
+                                Describe Image (AI)
+                              </Button>
+                            </form>
+                            <form action={removeBackgroundAction}>
+                              <input type="hidden" name="file_id" value={file.id} />
+                              <Button variant="ghost" type="submit">
+                                Remove Background (AI)
+                              </Button>
+                            </form>
+                          </>
+                        )}
+                        {(file.file_type.startsWith("audio/") || file.file_type.startsWith("video/")) && (
+                          <form action={transcribeAction}>
+                            <input type="hidden" name="file_id" value={file.id} />
+                            <Button variant="ghost" type="submit">
+                              Transcribe (AI)
+                            </Button>
+                          </form>
+                        )}
                       </li>
                     ))}
                   </ul>
                 ) : null}
+                {finding.files.map((file) => (
+                  <div key={`${file.id}-ai`} className="mt-2 rounded border border-[var(--border)] p-2 text-xs">
+                    {file.ocr_text ? <p><strong>OCR:</strong> {file.ocr_text}</p> : null}
+                    {file.ai_description ? <p><strong>Image description:</strong> {file.ai_description}</p> : null}
+                    {file.transcription ? <p><strong>Transcription:</strong> {file.transcription}</p> : null}
+                  </div>
+                ))}
 
                 <div className="mt-3 flex flex-wrap gap-2">
                   {!finding.is_verified ? (

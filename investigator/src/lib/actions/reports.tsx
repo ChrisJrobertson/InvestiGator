@@ -21,6 +21,7 @@ import { Readable } from "node:stream";
 import { buildReportPrompt, type CaseWithRelations } from "@/lib/reportPrompts";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentProfile, logAudit } from "@/lib/actions/audit";
+import { enforceReportLimit } from "@/lib/actions/plan-limits";
 
 type ReportType =
   | "FULL_INVESTIGATION"
@@ -115,6 +116,7 @@ function extractTextFromAnthropicResponse(response: AnthropicResponseLike) {
 async function generateReportInternal(caseId: string, reportType: ReportType, parentReportId?: string) {
   const supabase = await createClient();
   const profile = await getCurrentProfile();
+  await enforceReportLimit(profile.organisation_id);
   const caseData = await getCaseWithRelations(caseId);
   const prompt = buildReportPrompt(caseData, reportType);
 

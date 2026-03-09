@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentProfile, logAudit } from "@/lib/actions/audit";
+import { enforceCaseLimit } from "@/lib/actions/plan-limits";
 
 type ListCaseFilters = {
   status?: string;
@@ -83,6 +84,7 @@ export async function getCase(id: string) {
 export async function createCase(formData: FormData) {
   const supabase = await createClient();
   const profile = await getCurrentProfile();
+  await enforceCaseLimit(profile.organisation_id);
 
   const { data: ref, error: refError } = await supabase.rpc("next_ref", {
     p_scope: `org:${profile.organisation_id}`,

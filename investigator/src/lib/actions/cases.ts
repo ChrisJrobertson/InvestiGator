@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { getAuthProfile, logAudit } from "./audit";
+import { enforceCaseLimit } from "./plan-limits";
 
 export async function listCases(filters?: {
   status?: string;
@@ -108,6 +109,8 @@ export interface CaseFormData {
 export async function createCase(formData: CaseFormData) {
   const supabase = await createClient();
   const { user, profile } = await getAuthProfile();
+
+  await enforceCaseLimit(profile.organisation_id);
 
   const { data: ref } = await supabase.rpc("next_ref", {
     p_key: `org:${profile.organisation_id}`,

@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { getAuthProfile, logAudit } from "./audit";
+import { enforceReportLimit } from "./plan-limits";
 import { buildReportPrompt, type CaseForReport } from "@/lib/reportPrompts";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -41,8 +42,10 @@ async function fetchCaseForReport(caseId: string): Promise<CaseForReport> {
 }
 
 export async function generateReport(caseId: string, reportType: string) {
-  const { user } = await getAuthProfile();
+  const { user, profile } = await getAuthProfile();
   const supabase = await createClient();
+
+  await enforceReportLimit(profile.organisation_id);
 
   const caseForReport = await fetchCaseForReport(caseId);
   const { system, user: userPrompt, title } = buildReportPrompt(caseForReport, reportType);

@@ -45,7 +45,7 @@ export async function getCase(id: string) {
   const [findingsRes, timeRes, expenseRes, reportsRes] = await Promise.all([
     supabase
       .from("findings")
-      .select("id, evidence_ref, title, finding_type, severity, status, found_at, found_by")
+      .select("id, evidence_ref, title, description, finding_type, severity, status, found_at, found_by, location, profiles!findings_found_by_fkey(name), evidence_files(id, file_name, file_type, file_size, storage_path, hash_sha256, uploaded_at)")
       .eq("case_id", id)
       .order("found_at", { ascending: false }),
     supabase

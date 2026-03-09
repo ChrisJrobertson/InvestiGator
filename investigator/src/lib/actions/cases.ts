@@ -50,13 +50,15 @@ export async function getCase(id: string) {
       .order("found_at", { ascending: false }),
     supabase
       .from("time_entries")
-      .select("id, description, hours, rate, date, billable, profile_id, profiles(name)")
+      .select("id, description, hours, rate, date, billable, invoice_id, profile_id, profiles(name)")
       .eq("case_id", id)
+      .is("deleted_at", null)
       .order("date", { ascending: false }),
     supabase
       .from("expenses")
-      .select("id, description, amount, category, date, billable, profile_id, profiles(name)")
+      .select("id, description, amount, category, date, billable, invoice_id, profile_id, profiles(name)")
       .eq("case_id", id)
+      .is("deleted_at", null)
       .order("date", { ascending: false }),
     supabase
       .from("reports")

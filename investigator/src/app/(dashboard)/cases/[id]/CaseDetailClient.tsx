@@ -9,7 +9,11 @@ import { updateCaseStatus, deleteCase } from "@/lib/actions/cases";
 import { createFinding, updateFinding, deleteFinding, verifyFinding } from "@/lib/actions/findings";
 import { uploadEvidenceFile, getSignedUrl, deleteEvidenceFile } from "@/lib/actions/evidence-files";
 import { generateReport, approveReport, updateReportContent, exportReportWord } from "@/lib/actions/reports";
+import { createTimeEntry, deleteTimeEntry } from "@/lib/actions/time-entries";
+import { createExpense, deleteExpense } from "@/lib/actions/expenses";
+import { generateInvoice } from "@/lib/actions/invoices";
 import { REPORT_TYPES, getReportTypeLabel } from "@/lib/reportPrompts";
+import { EXPENSE_CATEGORIES } from "@/lib/constants";
 import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/Input";
 import { CASE_STATUSES, FINDING_TYPES, FINDING_SEVERITIES } from "@/lib/constants";
@@ -66,6 +70,7 @@ interface TimeEntry {
   rate: number | null;
   date: string;
   billable: boolean;
+  invoice_id: string | null;
   profiles: { name: string } | null;
 }
 
@@ -76,6 +81,7 @@ interface Expense {
   category: string;
   date: string;
   billable: boolean;
+  invoice_id: string | null;
   profiles: { name: string } | null;
 }
 
@@ -151,6 +157,30 @@ export function CaseDetailClient({
   const [viewingReport, setViewingReport] = useState<Report | null>(null);
   const [editingContent, setEditingContent] = useState(false);
   const [editContent, setEditContent] = useState("");
+
+  // Timer state
+  const [timerStart, setTimerStart] = useState<number | null>(null);
+  const [timerElapsed, setTimerElapsed] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Billing modals
+  const [timeModalOpen, setTimeModalOpen] = useState(false);
+  const [expenseModalOpen, setExpenseModalOpen] = useState(false);
+  const [invoiceConfirmOpen, setInvoiceConfirmOpen] = useState(false);
+  const [timeForm, setTimeForm] = useState({
+    description: "",
+    hours: "",
+    rate: "",
+    date: new Date().toISOString().slice(0, 10),
+    billable: true,
+  });
+  const [expenseForm, setExpenseForm] = useState({
+    description: "",
+    amount: "",
+    category: "OTHER",
+    date: new Date().toISOString().slice(0, 10),
+    billable: true,
+  });
 
   const [findingForm, setFindingForm] = useState({
     title: "",
@@ -326,6 +356,113 @@ export function CaseDetailClient({
       } catch (err) {
         toast("error", (err as Error).message);
         setDeleteOpen(false);
+      }
+    });
+  };
+
+  // Timer functions
+  const startTimer = () => {
+    setTimerStart(Date.now());
+    setTimerElapsed(0);
+    timerRef.current = setInterval(() => {
+      setTimerElapsed((prev) => prev + 1);
+    }, 1000);
+  };
+
+  const stopTimer = () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = null;
+    const elapsed = timerStart ? (Date.now() - timerStart) / 1000 / 3600 : 0;
+    const roundedHours = Math.max(0.25, Math.round(elapsed * 4) / 4);
+    setTimeForm((f) => ({ ...f, hours: roundedHours.toString() }));
+    setTimerStart(null);
+    setTimerElapsed(0);
+    setTimeModalOpen(true);
+  };
+
+  const formatTimer = (seconds: number) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+  };
+
+  const handleCreateTimeEntry = async (e: React.FormEvent) => {
+    e.preventDefault();
+    startTransition(async () => {
+      try {
+        await createTimeEntry(caseId, {
+          description: timeForm.description,
+          hours: parseFloat(timeForm.hours),
+          rate: timeForm.rate ? parseFloat(timeForm.rate) : undefined,
+          date: timeForm.date,
+          billable: timeForm.billable,
+        });
+        toast("success", "Time entry logged");
+        setTimeModalOpen(false);
+        setTimeForm({ description: "", hours: "", rate: "", date: new Date().toISOString().slice(0, 10), billable: true });
+        router.refresh();
+      } catch (err) {
+        toast("error", (err as Error).message);
+      }
+    });
+  };
+
+  const handleDeleteTimeEntry = (entryId: string) => {
+    startTransition(async () => {
+      try {
+        await deleteTimeEntry(entryId);
+        toast("success", "Time entry deleted");
+        router.refresh();
+      } catch (err) {
+        toast("error", (err as Error).message);
+      }
+    });
+  };
+
+  const handleCreateExpense = async (e: React.FormEvent) => {
+    e.preventDefault();
+    startTransition(async () => {
+      try {
+        await createExpense(caseId, {
+          description: expenseForm.description,
+          amount: parseFloat(expenseForm.amount),
+          category: expenseForm.category,
+          date: expenseForm.date,
+          billable: expenseForm.billable,
+        });
+        toast("success", "Expense logged");
+        setExpenseModalOpen(false);
+        setExpenseForm({ description: "", amount: "", category: "OTHER", date: new Date().toISOString().slice(0, 10), billable: true });
+        router.refresh();
+      } catch (err) {
+        toast("error", (err as Error).message);
+      }
+    });
+  };
+
+  const handleDeleteExpense = (expenseId: string) => {
+    startTransition(async () => {
+      try {
+        await deleteExpense(expenseId);
+        toast("success", "Expense deleted");
+        router.refresh();
+      } catch (err) {
+        toast("error", (err as Error).message);
+      }
+    });
+  };
+
+  const handleGenerateInvoice = () => {
+    startTransition(async () => {
+      try {
+        const inv = await generateInvoice(caseId);
+        toast("success", `Invoice ${inv.invoice_number} generated`);
+        setInvoiceConfirmOpen(false);
+        router.refresh();
+      } catch (err) {
+        toast("error", (err as Error).message);
+        setInvoiceConfirmOpen(false);
       }
     });
   };
@@ -599,8 +736,33 @@ export function CaseDetailClient({
       {/* TIME TAB */}
       {tab === "time" && (
         <div>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              {timerStart ? (
+                <Button size="sm" variant="danger" onClick={stopTimer}>
+                  <Clock className="h-4 w-4" />
+                  Stop {formatTimer(timerElapsed)}
+                </Button>
+              ) : (
+                <Button size="sm" variant="secondary" onClick={startTimer}>
+                  <Clock className="h-4 w-4" />
+                  Start Timer
+                </Button>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="secondary" onClick={() => setInvoiceConfirmOpen(true)}>
+                <Receipt className="h-4 w-4" />
+                Generate Invoice
+              </Button>
+              <Button size="sm" onClick={() => setTimeModalOpen(true)}>
+                <Plus className="h-4 w-4" />
+                Log Time
+              </Button>
+            </div>
+          </div>
           {timeEntries.length === 0 ? (
-            <p className="text-sm text-text-muted text-center py-8">No time entries yet.</p>
+            <p className="text-sm text-text-muted text-center py-8">No time entries yet. Start the timer or log time manually.</p>
           ) : (
             <div className="rounded-xl border border-border bg-surface overflow-hidden">
               <table className="w-full">
@@ -611,21 +773,30 @@ export function CaseDetailClient({
                     <th className="px-4 py-3 text-left text-xs font-medium text-text-muted uppercase">By</th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-text-muted uppercase">Hours</th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-text-muted uppercase">Amount</th>
+                    <th className="px-4 py-3 w-10"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
                   {timeEntries.map((t) => (
-                    <tr key={t.id}>
+                    <tr key={t.id} className={t.invoice_id ? "opacity-60" : ""}>
                       <td className="px-4 py-3 text-sm text-text">{formatDate(t.date)}</td>
-                      <td className="px-4 py-3 text-sm text-text">{t.description}</td>
+                      <td className="px-4 py-3 text-sm text-text">
+                        {t.description}
+                        {t.invoice_id && <Badge className="ml-2">Invoiced</Badge>}
+                      </td>
                       <td className="px-4 py-3 text-sm text-text-muted">
                         {(t.profiles as unknown as { name: string })?.name ?? "—"}
                       </td>
-                      <td className="px-4 py-3 text-sm text-text text-right font-mono">
-                        {formatHours(Number(t.hours))}
-                      </td>
+                      <td className="px-4 py-3 text-sm text-text text-right font-mono">{formatHours(Number(t.hours))}</td>
                       <td className="px-4 py-3 text-sm text-text text-right font-mono">
                         {t.rate ? formatCurrency(Number(t.hours) * Number(t.rate)) : "—"}
+                      </td>
+                      <td className="px-4 py-3">
+                        {!t.invoice_id && (
+                          <button onClick={() => handleDeleteTimeEntry(t.id)} className="text-text-muted hover:text-danger cursor-pointer" title="Delete">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -639,6 +810,16 @@ export function CaseDetailClient({
       {/* EXPENSES TAB */}
       {tab === "expenses" && (
         <div>
+          <div className="flex justify-end mb-4 gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setInvoiceConfirmOpen(true)}>
+              <Receipt className="h-4 w-4" />
+              Generate Invoice
+            </Button>
+            <Button size="sm" onClick={() => setExpenseModalOpen(true)}>
+              <Plus className="h-4 w-4" />
+              Add Expense
+            </Button>
+          </div>
           {expenses.length === 0 ? (
             <p className="text-sm text-text-muted text-center py-8">No expenses yet.</p>
           ) : (
@@ -651,19 +832,28 @@ export function CaseDetailClient({
                     <th className="px-4 py-3 text-left text-xs font-medium text-text-muted uppercase">Category</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-text-muted uppercase">By</th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-text-muted uppercase">Amount</th>
+                    <th className="px-4 py-3 w-10"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
                   {expenses.map((ex) => (
-                    <tr key={ex.id}>
+                    <tr key={ex.id} className={ex.invoice_id ? "opacity-60" : ""}>
                       <td className="px-4 py-3 text-sm text-text">{formatDate(ex.date)}</td>
-                      <td className="px-4 py-3 text-sm text-text">{ex.description}</td>
+                      <td className="px-4 py-3 text-sm text-text">
+                        {ex.description}
+                        {ex.invoice_id && <Badge className="ml-2">Invoiced</Badge>}
+                      </td>
                       <td className="px-4 py-3 text-sm"><Badge>{ex.category}</Badge></td>
                       <td className="px-4 py-3 text-sm text-text-muted">
                         {(ex.profiles as unknown as { name: string })?.name ?? "—"}
                       </td>
-                      <td className="px-4 py-3 text-sm text-text text-right font-mono">
-                        {formatCurrency(Number(ex.amount))}
+                      <td className="px-4 py-3 text-sm text-text text-right font-mono">{formatCurrency(Number(ex.amount))}</td>
+                      <td className="px-4 py-3">
+                        {!ex.invoice_id && (
+                          <button onClick={() => handleDeleteExpense(ex.id)} className="text-text-muted hover:text-danger cursor-pointer" title="Delete">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -951,6 +1141,65 @@ export function CaseDetailClient({
         <div className="flex gap-2">
           <Button variant="secondary" onClick={() => setDeleteOpen(false)} className="flex-1">Cancel</Button>
           <Button variant="danger" onClick={handleDeleteCase} loading={isPending} className="flex-1">Delete Case</Button>
+        </div>
+      </Modal>
+
+      {/* LOG TIME MODAL */}
+      <Modal open={timeModalOpen} onClose={() => setTimeModalOpen(false)} title="Log Time">
+        <form onSubmit={handleCreateTimeEntry} className="space-y-4">
+          <Input id="time_desc" label="Description" value={timeForm.description} onChange={(e) => setTimeForm({ ...timeForm, description: e.target.value })} placeholder="What did you work on?" required />
+          <div className="grid grid-cols-3 gap-4">
+            <Input id="time_hours" label="Hours" type="number" step="0.25" min="0.25" value={timeForm.hours} onChange={(e) => setTimeForm({ ...timeForm, hours: e.target.value })} required />
+            <Input id="time_rate" label="Rate ($/hr)" type="number" step="0.01" value={timeForm.rate} onChange={(e) => setTimeForm({ ...timeForm, rate: e.target.value })} />
+            <Input id="time_date" label="Date" type="date" value={timeForm.date} onChange={(e) => setTimeForm({ ...timeForm, date: e.target.value })} required />
+          </div>
+          <label className="flex items-center gap-2 text-sm text-text-muted cursor-pointer">
+            <input type="checkbox" checked={timeForm.billable} onChange={(e) => setTimeForm({ ...timeForm, billable: e.target.checked })} className="rounded border-border" />
+            Billable
+          </label>
+          <div className="flex gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setTimeModalOpen(false)} className="flex-1">Cancel</Button>
+            <Button type="submit" loading={isPending} className="flex-1">Log Time</Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* ADD EXPENSE MODAL */}
+      <Modal open={expenseModalOpen} onClose={() => setExpenseModalOpen(false)} title="Add Expense">
+        <form onSubmit={handleCreateExpense} className="space-y-4">
+          <Input id="exp_desc" label="Description" value={expenseForm.description} onChange={(e) => setExpenseForm({ ...expenseForm, description: e.target.value })} required />
+          <div className="grid grid-cols-3 gap-4">
+            <Input id="exp_amount" label="Amount ($)" type="number" step="0.01" min="0.01" value={expenseForm.amount} onChange={(e) => setExpenseForm({ ...expenseForm, amount: e.target.value })} required />
+            <div className="space-y-1.5">
+              <label className="block text-sm font-medium text-text-muted">Category</label>
+              <select className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text" value={expenseForm.category} onChange={(e) => setExpenseForm({ ...expenseForm, category: e.target.value })}>
+                {EXPENSE_CATEGORIES.map((c) => (<option key={c} value={c}>{c}</option>))}
+              </select>
+            </div>
+            <Input id="exp_date" label="Date" type="date" value={expenseForm.date} onChange={(e) => setExpenseForm({ ...expenseForm, date: e.target.value })} required />
+          </div>
+          <label className="flex items-center gap-2 text-sm text-text-muted cursor-pointer">
+            <input type="checkbox" checked={expenseForm.billable} onChange={(e) => setExpenseForm({ ...expenseForm, billable: e.target.checked })} className="rounded border-border" />
+            Billable
+          </label>
+          <div className="flex gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setExpenseModalOpen(false)} className="flex-1">Cancel</Button>
+            <Button type="submit" loading={isPending} className="flex-1">Add Expense</Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* GENERATE INVOICE CONFIRM */}
+      <Modal open={invoiceConfirmOpen} onClose={() => setInvoiceConfirmOpen(false)} title="Generate Invoice">
+        <p className="text-sm text-text-muted mb-4">
+          This will create an invoice for all unbilled time entries and expenses on this case. Items will be marked as invoiced and cannot be edited or deleted afterwards.
+        </p>
+        <div className="flex gap-2">
+          <Button variant="secondary" onClick={() => setInvoiceConfirmOpen(false)} className="flex-1">Cancel</Button>
+          <Button onClick={handleGenerateInvoice} loading={isPending} className="flex-1">
+            <Receipt className="h-4 w-4" />
+            Generate Invoice
+          </Button>
         </div>
       </Modal>
 

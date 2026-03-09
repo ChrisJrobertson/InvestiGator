@@ -1,60 +1,67 @@
-import { createClient } from "@/lib/supabase/server";
+import { listCases } from "@/lib/actions/cases";
+import { listClients } from "@/lib/actions/clients";
 import { Header } from "@/components/layout/Header";
-import { CaseCard } from "@/components/cases/CaseCard";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Briefcase } from "lucide-react";
-import Link from "next/link";
-import { Button } from "@/components/ui/Button";
+import { CaseListClient } from "./CaseListClient";
+import { createClient } from "@/lib/supabase/server";
 
-export default async function CasesPage() {
-  const supabase = await createClient();
+export default async function CasesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{
+    status?: string;
+    priority?: string;
+    client_id?: string;
+    search?: string;
+    new?: string;
+  }>;
+}) {
+  const params = await searchParams;
 
-  const { data: { user } } = await supabase.auth.getUser();
-  const { data: profile } = await supabase
+  const [cases, clients, supabase] = await Promise.all([
+    listCases({
+      status: params.status,
+      priority: params.priority,
+      client_id: params.client_id,
+      search: params.search,
+    }),
+    listClients(),
+    createClient(),
+  ]);
+
+  const { data: investigators } = await supabase
     .from("profiles")
-    .select("organisation_id")
-    .eq("id", user!.id)
-    .single();
+    .select("id, name, email")
+    .eq("is_active", true)
+    .order("name");
 
-  const { data: cases } = await supabase
-    .from("cases")
-    .select("id, ref, title, status, priority, created_at, clients(name)")
-    .eq("organisation_id", profile!.organisation_id)
-    .order("created_at", { ascending: false });
+  const hasFilters = !!(params.status || params.priority || params.client_id || params.search);
 
   return (
     <>
-      <Header
-        title="Cases"
-        description="Manage your investigation cases"
-        actions={
-          <Link href="/cases?new=true">
-            <Button>New Case</Button>
-          </Link>
-        }
-      />
-
-      {(cases ?? []).length === 0 ? (
-        <EmptyState
-          icon={Briefcase}
-          title="No cases yet"
-          description="Create your first investigation case to get started."
-        />
+      <Header title="Cases" description="Manage your investigation cases" />
+      {cases.length === 0 && !hasFilters ? (
+        <CaseListClient
+          cases={[]}
+          clients={clients}
+          investigators={investigators ?? []}
+          showNewModal={params.new === "true"}
+        >
+          <EmptyState
+            icon={Briefcase}
+            title="No cases yet"
+            description="Create your first investigation case to get started."
+          />
+        </CaseListClient>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {(cases ?? []).map((c) => (
-            <CaseCard
-              key={c.id}
-              id={c.id}
-              ref={c.ref}
-              title={c.title}
-              status={c.status}
-              priority={c.priority}
-              clientName={(c.clients as unknown as { name: string })?.name}
-              createdAt={c.created_at}
-            />
-          ))}
-        </div>
+        <CaseListClient
+          cases={cases}
+          clients={clients}
+          investigators={investigators ?? []}
+          showNewModal={params.new === "true"}
+          initialFilters={params}
+        />
       )}
     </>
   );

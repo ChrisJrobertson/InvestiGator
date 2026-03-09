@@ -1,7 +1,15 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const EXCLUDED_PATH_PREFIXES = ["/sign-in", "/sign-up", "/api/webhooks", "/portal"];
+const EXCLUDED_PATH_PREFIXES = [
+  "/sign-in",
+  "/sign-up",
+  "/auth/callback",
+  "/api/webhooks/stripe",
+  "/api/webhooks/clerk",
+  "/api/webhooks",
+  "/portal",
+];
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;

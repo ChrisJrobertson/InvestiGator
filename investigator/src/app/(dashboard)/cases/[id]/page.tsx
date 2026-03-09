@@ -1,7 +1,10 @@
 import { getCase } from "@/lib/actions/cases";
+import { listPortalLinks } from "@/lib/actions/portal";
 import { Header } from "@/components/layout/Header";
 import { Badge } from "@/components/ui/Badge";
 import { StatCard } from "@/components/ui/StatCard";
+import { OsintPanel } from "@/components/cases/OsintPanel";
+import { PortalLinksPanel } from "@/components/cases/PortalLinksPanel";
 import { formatDate, formatCurrency, formatHours } from "@/lib/utils";
 import { Search, Clock, DollarSign, FileText } from "lucide-react";
 import { CaseDetailClient } from "./CaseDetailClient";
@@ -29,7 +32,10 @@ export default async function CaseDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const caseData = await getCase(id);
+  const [caseData, portalLinks] = await Promise.all([
+    getCase(id),
+    listPortalLinks(id),
+  ]);
 
   const client = caseData.clients as unknown as {
     id: string;
@@ -147,6 +153,12 @@ export default async function CaseDetailPage({
           <p className="text-sm text-text whitespace-pre-wrap">{caseData.description}</p>
         </div>
       )}
+
+      {/* OSINT + Portal side panels */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+        <OsintPanel defaultSearch={caseData.title} />
+        <PortalLinksPanel caseId={id} links={portalLinks} />
+      </div>
 
       {/* Tabbed sections */}
       <CaseDetailClient

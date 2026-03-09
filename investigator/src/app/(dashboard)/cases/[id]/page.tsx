@@ -22,6 +22,9 @@ import {
   regenerateReport,
   updateReport,
 } from "@/lib/actions/reports";
+import { createExpense, deleteExpense, listExpenses } from "@/lib/actions/expenses";
+import { generateInvoice, generateInvoicePdf, listInvoices } from "@/lib/actions/invoices";
+import { createTimeEntry, deleteTimeEntry, listTimeEntries } from "@/lib/actions/time-entries";
 import { ReportToolbar } from "@/components/reports/report-toolbar";
 import { ReportViewer } from "@/components/reports/report-viewer";
 import { formatCurrencyFromPence } from "@/lib/utils";
@@ -38,6 +41,12 @@ export default async function CaseDetailPage({
     listFindings(id),
     listReports(id),
   ]);
+  const [{ rows: timeEntries }, { rows: expenses }, invoices] = await Promise.all([
+    listTimeEntries(id),
+    listExpenses(id),
+    listInvoices(),
+  ]);
+  const caseInvoices = invoices.filter((invoice) => invoice.case_id === id);
   const latestReport = reports[0] ? await getReport(reports[0].id) : null;
 
   async function downloadFileAction(formData: FormData) {
@@ -89,6 +98,21 @@ export default async function CaseDetailPage({
     const content = String(formData.get("content") ?? "");
     if (!reportId || !content.trim()) return;
     await updateReport(reportId, content);
+  }
+
+  async function generateInvoiceAction(formData: FormData) {
+    "use server";
+    const startDate = String(formData.get("start_date") ?? "");
+    const endDate = String(formData.get("end_date") ?? "");
+    await generateInvoice(id, startDate || undefined, endDate || undefined);
+  }
+
+  async function exportInvoicePdfAction(formData: FormData) {
+    "use server";
+    const invoiceId = String(formData.get("invoice_id") ?? "");
+    if (!invoiceId) return;
+    const url = await generateInvoicePdf(invoiceId);
+    redirect(url);
   }
 
   return (
@@ -228,6 +252,127 @@ export default async function CaseDetailPage({
             <Button type="submit">Save Finding</Button>
           </div>
         </form>
+      </section>
+
+      <section className="mt-6 rounded-md border border-[var(--border)] bg-[var(--surface)] p-4">
+        <h2 className="mb-3 text-lg font-semibold">Time Entries</h2>
+        <form action={createTimeEntry} className="mb-4 grid gap-2 md:grid-cols-5">
+          <input type="hidden" name="case_id" value={id} />
+          <Input name="date" type="date" required />
+          <Input name="hours" type="number" step="0.25" placeholder="Hours" required />
+          <Input name="rate" type="number" placeholder="Rate (pence/hour)" defaultValue={String(currentCase.rate ?? 500)} />
+          <Input name="description" placeholder="Description" className="md:col-span-2" />
+          <label className="flex items-center gap-2 text-sm text-[var(--text-muted)] md:col-span-5">
+            <input name="billable" type="checkbox" defaultChecked />
+            Billable
+          </label>
+          <Button type="submit" className="md:col-span-5">
+            Log Time
+          </Button>
+        </form>
+
+        {!timeEntries.length ? (
+          <p className="text-xs text-[var(--text-muted)]">No time entries yet.</p>
+        ) : (
+          <ul className="space-y-2">
+            {timeEntries.map((entry) => (
+              <li
+                key={entry.id}
+                className="flex items-center justify-between rounded border border-[var(--border)] px-3 py-2 text-xs"
+              >
+                <span>
+                  {new Date(entry.date).toLocaleDateString("en-GB")} · {entry.hours}h · {entry.description}
+                </span>
+                <form action={deleteTimeEntry.bind(null, entry.id)}>
+                  <Button type="submit" variant="danger">
+                    Delete
+                  </Button>
+                </form>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="mt-6 rounded-md border border-[var(--border)] bg-[var(--surface)] p-4">
+        <h2 className="mb-3 text-lg font-semibold">Expenses</h2>
+        <form action={createExpense} encType="multipart/form-data" className="mb-4 grid gap-2 md:grid-cols-5">
+          <input type="hidden" name="case_id" value={id} />
+          <Input name="date" type="date" required />
+          <Input name="amount" type="number" placeholder="Amount (pence)" required />
+          <Input name="category" placeholder="Category" defaultValue="OTHER" />
+          <Input name="description" placeholder="Description" className="md:col-span-2" required />
+          <input name="receipt" type="file" className="text-xs text-[var(--text-muted)] md:col-span-5" />
+          <label className="flex items-center gap-2 text-sm text-[var(--text-muted)] md:col-span-5">
+            <input name="billable" type="checkbox" defaultChecked />
+            Billable
+          </label>
+          <Button type="submit" className="md:col-span-5">
+            Log Expense
+          </Button>
+        </form>
+
+        {!expenses.length ? (
+          <p className="text-xs text-[var(--text-muted)]">No expenses yet.</p>
+        ) : (
+          <ul className="space-y-2">
+            {expenses.map((expense) => (
+              <li
+                key={expense.id}
+                className="flex items-center justify-between rounded border border-[var(--border)] px-3 py-2 text-xs"
+              >
+                <span>
+                  {new Date(expense.date).toLocaleDateString("en-GB")} · {expense.description} ·{" "}
+                  {formatCurrencyFromPence(Number(expense.amount))}
+                </span>
+                <form action={deleteExpense.bind(null, expense.id)}>
+                  <Button type="submit" variant="danger">
+                    Delete
+                  </Button>
+                </form>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="mt-6 rounded-md border border-[var(--border)] bg-[var(--surface)] p-4">
+        <h2 className="mb-3 text-lg font-semibold">Invoices</h2>
+        <form action={generateInvoiceAction} className="mb-4 flex flex-wrap items-end gap-2">
+          <div>
+            <label className="mb-1 block text-xs text-[var(--text-muted)]">From</label>
+            <Input name="start_date" type="date" />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-[var(--text-muted)]">To</label>
+            <Input name="end_date" type="date" />
+          </div>
+          <Button type="submit">Generate Invoice</Button>
+        </form>
+
+        {!caseInvoices.length ? (
+          <p className="text-xs text-[var(--text-muted)]">No invoices yet for this case.</p>
+        ) : (
+          <ul className="space-y-2">
+            {caseInvoices.map((invoice) => (
+              <li
+                key={invoice.id}
+                className="flex items-center justify-between rounded border border-[var(--border)] px-3 py-2 text-xs"
+              >
+                <span>
+                  {invoice.invoice_number} · {invoice.status} ·{" "}
+                  {formatCurrencyFromPence(Math.round(Number(invoice.total)))}
+                </span>
+                <form action={exportInvoicePdfAction}>
+                  <input type="hidden" name="invoice_id" value={invoice.id} />
+                  <Button type="submit" variant="ghost">
+                    PDF
+                  </Button>
+                </form>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className="mt-6">

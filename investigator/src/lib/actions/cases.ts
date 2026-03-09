@@ -60,7 +60,7 @@ export async function getCase(id: string) {
       .order("date", { ascending: false }),
     supabase
       .from("reports")
-      .select("id, title, report_type, status, created_at")
+      .select("id, title, content, report_type, status, version, created_at, approved_at, pdf_storage_path, word_storage_path, prompt_tokens, completion_tokens")
       .eq("case_id", id)
       .order("created_at", { ascending: false }),
   ]);

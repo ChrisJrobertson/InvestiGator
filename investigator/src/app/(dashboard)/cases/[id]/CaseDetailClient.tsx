@@ -8,6 +8,8 @@ import { useToast } from "@/components/ui/Toast";
 import { updateCaseStatus, deleteCase } from "@/lib/actions/cases";
 import { createFinding, updateFinding, deleteFinding, verifyFinding } from "@/lib/actions/findings";
 import { uploadEvidenceFile, getSignedUrl, deleteEvidenceFile } from "@/lib/actions/evidence-files";
+import { generateReport, approveReport, updateReportContent, exportReportWord } from "@/lib/actions/reports";
+import { REPORT_TYPES, getReportTypeLabel } from "@/lib/reportPrompts";
 import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/Input";
 import { CASE_STATUSES, FINDING_TYPES, FINDING_SEVERITIES } from "@/lib/constants";
@@ -26,6 +28,10 @@ import {
   X,
   Pencil,
   Shield,
+  Sparkles,
+  Check,
+  Loader2,
+  RefreshCw,
 } from "lucide-react";
 
 interface EvidenceFile {
@@ -76,9 +82,16 @@ interface Expense {
 interface Report {
   id: string;
   title: string;
+  content: string | null;
   report_type: string;
   status: string;
+  version: number;
   created_at: string;
+  approved_at: string | null;
+  pdf_storage_path: string | null;
+  word_storage_path: string | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
 }
 
 interface Props {
@@ -131,6 +144,13 @@ export function CaseDetailClient({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteFindingTarget, setDeleteFindingTarget] = useState<Finding | null>(null);
   const [uploadTarget, setUploadTarget] = useState<Finding | null>(null);
+
+  const [generateOpen, setGenerateOpen] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [selectedReportType, setSelectedReportType] = useState(REPORT_TYPES[0]);
+  const [viewingReport, setViewingReport] = useState<Report | null>(null);
+  const [editingContent, setEditingContent] = useState(false);
+  const [editContent, setEditContent] = useState("");
 
   const [findingForm, setFindingForm] = useState({
     title: "",
@@ -306,6 +326,66 @@ export function CaseDetailClient({
       } catch (err) {
         toast("error", (err as Error).message);
         setDeleteOpen(false);
+      }
+    });
+  };
+
+  const handleGenerate = async () => {
+    setGenerating(true);
+    try {
+      const report = await generateReport(caseId, selectedReportType);
+      toast("success", `Report generated (v${report.version})`);
+      setGenerateOpen(false);
+      setViewingReport({ ...report, approved_at: null, pdf_storage_path: null, word_storage_path: null, prompt_tokens: report.prompt_tokens, completion_tokens: report.completion_tokens });
+      router.refresh();
+    } catch (err) {
+      toast("error", (err as Error).message);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleApprove = (reportId: string) => {
+    startTransition(async () => {
+      try {
+        await approveReport(reportId);
+        toast("success", "Report approved");
+        setViewingReport(null);
+        router.refresh();
+      } catch (err) {
+        toast("error", (err as Error).message);
+      }
+    });
+  };
+
+  const handleSaveContent = () => {
+    if (!viewingReport) return;
+    startTransition(async () => {
+      try {
+        await updateReportContent(viewingReport.id, editContent);
+        toast("success", "Report content saved");
+        setEditingContent(false);
+        setViewingReport({ ...viewingReport, content: editContent });
+        router.refresh();
+      } catch (err) {
+        toast("error", (err as Error).message);
+      }
+    });
+  };
+
+  const handleExportWord = (reportId: string) => {
+    startTransition(async () => {
+      try {
+        const { url, fileName } = await exportReportWord(reportId);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = fileName;
+        a.target = "_blank";
+        a.click();
+        toast("success", "Word document exported");
+        router.refresh();
+      } catch (err) {
+        toast("error", (err as Error).message);
       }
     });
   };
@@ -597,19 +677,53 @@ export function CaseDetailClient({
       {/* REPORTS TAB */}
       {tab === "reports" && (
         <div>
+          <div className="flex justify-end mb-4">
+            <Button size="sm" onClick={() => setGenerateOpen(true)}>
+              <Sparkles className="h-4 w-4" />
+              Generate Report
+            </Button>
+          </div>
           {reports.length === 0 ? (
-            <p className="text-sm text-text-muted text-center py-8">No reports generated yet.</p>
+            <p className="text-sm text-text-muted text-center py-8">
+              No reports generated yet. Click &quot;Generate Report&quot; to create one with AI.
+            </p>
           ) : (
             <div className="space-y-3">
               {reports.map((r) => (
-                <div key={r.id} className="flex items-center justify-between rounded-xl border border-border bg-surface p-4">
-                  <div>
-                    <p className="text-sm font-medium text-text">{r.title}</p>
-                    <p className="text-xs text-text-muted">{formatDate(r.created_at)}</p>
+                <div
+                  key={r.id}
+                  onClick={() => {
+                    setViewingReport(r);
+                    setEditingContent(false);
+                  }}
+                  className="flex items-center justify-between rounded-xl border border-border bg-surface p-4 hover:bg-surface-light transition-colors cursor-pointer"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <p className="text-sm font-medium text-text truncate">{r.title}</p>
+                      <span className="text-xs font-mono text-text-muted">v{r.version}</span>
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-text-muted">
+                      <span>{formatDate(r.created_at)}</span>
+                      {r.prompt_tokens && (
+                        <span>{r.prompt_tokens + (r.completion_tokens ?? 0)} tokens</span>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex gap-2">
-                    <Badge>{r.report_type}</Badge>
-                    <Badge>{r.status}</Badge>
+                  <div className="flex items-center gap-2 shrink-0 ml-3">
+                    <Badge>{getReportTypeLabel(r.report_type).split(" ")[0]}</Badge>
+                    <Badge variant={r.status === "APPROVED" ? "accent" : r.status === "DRAFT" ? "default" : "info"}>
+                      {r.status}
+                    </Badge>
+                    {r.word_storage_path && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleExportWord(r.id); }}
+                        className="rounded-md p-1.5 text-text-muted hover:text-accent transition-colors cursor-pointer"
+                        title="Download Word"
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -839,6 +953,180 @@ export function CaseDetailClient({
           <Button variant="danger" onClick={handleDeleteCase} loading={isPending} className="flex-1">Delete Case</Button>
         </div>
       </Modal>
+
+      {/* GENERATE REPORT MODAL */}
+      <Modal open={generateOpen} onClose={() => !generating && setGenerateOpen(false)} title="Generate AI Report">
+        {generating ? (
+          <div className="flex flex-col items-center py-8">
+            <Loader2 className="h-8 w-8 text-accent animate-spin mb-4" />
+            <p className="text-sm text-text font-medium">Generating report...</p>
+            <p className="text-xs text-text-muted mt-1">This may take 15–30 seconds</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <label className="block text-sm font-medium text-text-muted">Report Type</label>
+              <select
+                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text"
+                value={selectedReportType}
+                onChange={(e) => setSelectedReportType(e.target.value)}
+              >
+                {REPORT_TYPES.map((t) => (
+                  <option key={t} value={t}>{getReportTypeLabel(t)}</option>
+                ))}
+              </select>
+            </div>
+            <p className="text-xs text-text-muted">
+              The AI will analyze all findings and evidence to generate a professional investigation report.
+              {reports.some((r) => r.report_type === selectedReportType) && (
+                <span className="text-warning"> A {getReportTypeLabel(selectedReportType)} already exists — this will create a new version.</span>
+              )}
+            </p>
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={() => setGenerateOpen(false)} className="flex-1">Cancel</Button>
+              <Button onClick={handleGenerate} className="flex-1">
+                <Sparkles className="h-4 w-4" />
+                Generate
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* VIEW / EDIT REPORT MODAL */}
+      <Modal
+        open={!!viewingReport}
+        onClose={() => { setViewingReport(null); setEditingContent(false); }}
+        title={viewingReport?.title ?? "Report"}
+        className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col"
+      >
+        {viewingReport && (
+          <div className="flex flex-col min-h-0">
+            {/* Toolbar */}
+            <div className="flex items-center gap-2 flex-wrap mb-4 pb-3 border-b border-border shrink-0">
+              <Badge variant={viewingReport.status === "APPROVED" ? "accent" : "default"}>
+                {viewingReport.status}
+              </Badge>
+              <span className="text-xs text-text-muted">v{viewingReport.version}</span>
+              {viewingReport.prompt_tokens && (
+                <span className="text-xs text-text-muted">
+                  {viewingReport.prompt_tokens + (viewingReport.completion_tokens ?? 0)} tokens
+                </span>
+              )}
+              <div className="flex-1" />
+              {!editingContent ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    setEditContent(viewingReport.content ?? "");
+                    setEditingContent(true);
+                  }}
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  Edit
+                </Button>
+              ) : (
+                <>
+                  <Button size="sm" variant="secondary" onClick={() => setEditingContent(false)}>Cancel</Button>
+                  <Button size="sm" onClick={handleSaveContent} loading={isPending}>
+                    <Check className="h-3.5 w-3.5" />
+                    Save
+                  </Button>
+                </>
+              )}
+              {viewingReport.status === "DRAFT" && (
+                <Button size="sm" variant="primary" onClick={() => handleApprove(viewingReport.id)} loading={isPending}>
+                  <CheckCircle className="h-3.5 w-3.5" />
+                  Approve
+                </Button>
+              )}
+              <Button size="sm" variant="secondary" onClick={() => handleExportWord(viewingReport.id)} loading={isPending}>
+                <Download className="h-3.5 w-3.5" />
+                Word
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  setViewingReport(null);
+                  setSelectedReportType(viewingReport.report_type);
+                  setGenerateOpen(true);
+                }}
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Regenerate
+              </Button>
+            </div>
+
+            {/* Content */}
+            <div className="overflow-y-auto min-h-0 flex-1">
+              {editingContent ? (
+                <textarea
+                  className="w-full h-full min-h-[400px] rounded-lg border border-border bg-bg px-4 py-3 text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent/50 resize-none"
+                  value={editContent}
+                  onChange={(e) => setEditContent(e.target.value)}
+                />
+              ) : (
+                <div className="prose prose-invert prose-sm max-w-none px-1">
+                  <ReportMarkdown content={viewingReport.content ?? ""} />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
+    </>
+  );
+}
+
+function ReportMarkdown({ content }: { content: string }) {
+  const lines = content.split("\n");
+  const elements: React.ReactNode[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.startsWith("### ")) {
+      elements.push(<h3 key={i} className="text-base font-semibold text-text mt-4 mb-2">{line.slice(4)}</h3>);
+    } else if (line.startsWith("## ")) {
+      elements.push(<h2 key={i} className="text-lg font-bold text-text mt-6 mb-2 border-b border-border pb-1">{line.slice(3)}</h2>);
+    } else if (line.startsWith("# ")) {
+      elements.push(<h1 key={i} className="text-xl font-bold text-text mt-6 mb-3">{line.slice(2)}</h1>);
+    } else if (line.startsWith("- ") || line.startsWith("* ")) {
+      elements.push(
+        <li key={i} className="text-sm text-text ml-4 list-disc mb-1">
+          <InlineContent text={line.slice(2)} />
+        </li>
+      );
+    } else if (line.startsWith("---")) {
+      elements.push(<hr key={i} className="border-border my-4" />);
+    } else if (line.trim() === "") {
+      elements.push(<div key={i} className="h-2" />);
+    } else {
+      elements.push(
+        <p key={i} className="text-sm text-text leading-relaxed mb-2">
+          <InlineContent text={line} />
+        </p>
+      );
+    }
+  }
+
+  return <>{elements}</>;
+}
+
+function InlineContent({ text }: { text: string }) {
+  const parts = text.split(/(\[EV-?\d+\]|\[EVD-\d+\]|\*\*[^*]+\*\*)/g);
+  return (
+    <>
+      {parts.map((part, i) => {
+        if (/^\[EV-?\d+\]$/.test(part) || /^\[EVD-\d+\]$/.test(part)) {
+          return <span key={i} className="font-mono text-accent font-medium cursor-pointer hover:underline">{part}</span>;
+        }
+        if (part.startsWith("**") && part.endsWith("**")) {
+          return <strong key={i} className="font-semibold">{part.slice(2, -2)}</strong>;
+        }
+        return <span key={i}>{part}</span>;
+      })}
     </>
   );
 }

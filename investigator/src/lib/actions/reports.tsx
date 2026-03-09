@@ -18,7 +18,13 @@ import {
   TextRun,
 } from "docx";
 import { Readable } from "node:stream";
-import { buildReportPrompt, type CaseWithRelations } from "@/lib/reportPrompts";
+import {
+  buildReportPrompt,
+  type CaseWithRelations,
+  type ClientData,
+  type EvidenceFileData,
+  type FindingData,
+} from "@/lib/reportPrompts";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentProfile, logAudit } from "@/lib/actions/audit";
 import { enforceReportLimit } from "@/lib/actions/plan-limits";
@@ -50,7 +56,7 @@ async function getCaseWithRelations(caseId: string): Promise<CaseWithRelations> 
   const supabase = await createClient();
   const { data: baseCase, error: caseError } = await supabase
     .from("cases")
-    .select("id, ref, title, type, description, opened_at, client_id")
+    .select("id, ref, title, type, description, opened_date:opened_at, client_id")
     .eq("id", caseId)
     .single();
   if (caseError || !baseCase) throw caseError ?? new Error("Case not found");
@@ -79,29 +85,35 @@ async function getCaseWithRelations(caseId: string): Promise<CaseWithRelations> 
         .is("deleted_at", null)
     : { data: [] as Array<{ finding_id: string; file_name: string }> };
 
-  const filesByFinding = new Map<string, Array<{ file_name: string }>>();
+  const filesByFinding = new Map<string, EvidenceFileData[]>();
   for (const file of files ?? []) {
     const list = filesByFinding.get(file.finding_id) ?? [];
     list.push({ file_name: file.file_name });
     filesByFinding.set(file.finding_id, list);
   }
 
+  const clientData: ClientData | null = client
+    ? { name: client.name, contact_name: client.contact_name ?? null }
+    : null;
+
+  const findingData: FindingData[] = (findings ?? []).map((finding) => ({
+    evidence_ref: finding.evidence_ref,
+    type: finding.type,
+    content: finding.content ?? "",
+    source: finding.source ?? "Unknown",
+    timestamp: finding.timestamp ?? new Date().toISOString(),
+    deleted_at: finding.deleted_at,
+    files: filesByFinding.get(finding.id) ?? [],
+  }));
+
   return {
     ref: baseCase.ref,
     title: baseCase.title,
     type: baseCase.type,
     description: baseCase.description,
-    opened_date: new Date(baseCase.opened_at ?? Date.now()).toISOString(),
-    client: client ? { name: client.name, contact_name: client.contact_name ?? null } : null,
-    findings: (findings ?? []).map((finding) => ({
-      evidence_ref: finding.evidence_ref,
-      type: finding.type,
-      content: finding.content ?? "",
-      source: finding.source ?? "Unknown",
-      timestamp: finding.timestamp ?? new Date().toISOString(),
-      deleted_at: finding.deleted_at,
-      files: filesByFinding.get(finding.id) ?? [],
-    })),
+    opened_date: new Date(baseCase.opened_date ?? Date.now()).toISOString(),
+    client: clientData,
+    findings: findingData,
   };
 }
 
@@ -118,7 +130,7 @@ async function generateReportInternal(caseId: string, reportType: ReportType, pa
   const profile = await getCurrentProfile();
   await enforceReportLimit(profile.organisation_id);
   const caseData = await getCaseWithRelations(caseId);
-  const prompt = buildReportPrompt(caseData, reportType);
+  const prompt = buildReportPrompt(reportType, caseData);
 
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const aiResponse = await anthropic.messages.create({

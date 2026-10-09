@@ -2,13 +2,13 @@
  * Deployment-wide AI egress policy. Fail-closed until explicitly enabled.
  * Per-case policy and customer consent require a separate, reviewed schema migration.
  */
-export type AiProvider = "private_qwen" | "anthropic" | "huggingface";
+export type AiProvider = "private_qwen" | "private_open_weight" | "anthropic" | "huggingface";
 export type AiDataPolicy = "private_only" | "approved_external";
 
 export type AiPolicy = {
   enabled: boolean;
   dataPolicy: AiDataPolicy;
-  provider: "private_qwen" | "anthropic";
+  provider: "private_qwen" | "private_open_weight" | "anthropic";
   approvedExternalProviders: Set<string>;
   approvedOrganisationIds: Set<string>;
 };
@@ -25,14 +25,14 @@ export function readAiPolicy(env: NodeJS.ProcessEnv = process.env): AiPolicy {
   if (enabled && dataPolicy !== "private_only" && dataPolicy !== "approved_external") {
     throw new Error("AI is not configured with an explicit data egress policy.");
   }
-  if (enabled && provider !== "private_qwen" && provider !== "anthropic") {
+  if (enabled && !["private_qwen", "private_open_weight", "anthropic"].includes(provider ?? "")) {
     throw new Error("AI provider must be explicitly configured.");
   }
 
   return {
     enabled,
     dataPolicy: dataPolicy === "approved_external" ? dataPolicy : "private_only",
-    provider: provider === "anthropic" ? provider : "private_qwen",
+    provider: provider === "anthropic" || provider === "private_open_weight" ? provider : "private_qwen",
     approvedExternalProviders: parseList(env.INVESTIGATOR_AI_APPROVED_EXTERNAL_PROVIDERS),
     approvedOrganisationIds: parseList(env.INVESTIGATOR_AI_APPROVED_ORG_IDS),
   };
@@ -43,7 +43,7 @@ export function authoriseAi(policy: AiPolicy, organisationId: string, provider: 
   if (!policy.approvedOrganisationIds.has(organisationId)) {
     throw new Error("AI processing is not approved for this organisation.");
   }
-  if (provider === "private_qwen") return;
+  if (provider === "private_qwen" || provider === "private_open_weight") return;
   if (policy.dataPolicy !== "approved_external" || !policy.approvedExternalProviders.has(provider)) {
     throw new Error("External AI processing is prohibited by the deployment policy.");
   }

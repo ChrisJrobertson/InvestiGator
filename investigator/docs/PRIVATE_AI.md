@@ -6,7 +6,7 @@ This is an integration scaffold, **not** a statement that the application is sec
 
 - All AI processing is **disabled by default**.
 - `INVESTIGATOR_AI_ENABLED=true` is required, alongside an explicit data egress policy, chosen model provider, and a list of authorised organisation UUIDs.
-- `private_only` allows only the privately hosted Qwen text-generation route. Existing Anthropic image-description and Hugging Face OCR/transcription/background-removal paths reject requests.
+- `private_only` allows only private, self-hosted text-generation backends: Qwen or an explicitly configured alternative such as gpt-oss or Ministral. Existing Anthropic image-description and Hugging Face OCR/transcription/background-removal paths reject requests.
 - `approved_external` allows specified external providers through `INVESTIGATOR_AI_APPROVED_EXTERNAL_PROVIDERS` (names: `anthropic`, `huggingface`), subject to case and organisation authorisation. No external provider is enabled simply by choosing a model.
 - There is **no automatic fallback** to Anthropic, Hugging Face or public Qwen if private Qwen fails.
 - The source content is **not placed in application audit metadata or error messages** by this integration.
@@ -15,7 +15,7 @@ This is an integration scaffold, **not** a statement that the application is sec
 
 ## Running a genuinely private Qwen service
 
-1. Deploy a licence-compatible Qwen open-weight model through vLLM or another reviewed inference server in your controlled environment.
+1. Deploy a licence-compatible Qwen, gpt-oss or Mistral open-weight model using a reviewed OpenAI-compatible inference server in your controlled environment. Verify each model's licence, hardware requirements and chat template.
 2. Keep the inference host on a private network. Protect a narrow HTTPS gateway with network policies, appropriate authentication, rate limits and ideally mTLS; do **not** publish the unprotected inference service.
 3. At the reverse proxy, allow only `POST /v1/chat/completions` from the application/gateway identity. Deny vLLM auxiliary and operational routes. vLLM's built-in API key **does not protect all paths**.
 4. Disable request-body logging, tracing of model inputs, crash dumps containing prompts, and unintended prompt retention; verify monitoring and backup behaviour.
@@ -29,13 +29,14 @@ See https://docs.vllm.ai/en/stable/usage/security/ for vLLM network and endpoint
 
 - `INVESTIGATOR_AI_ENABLED`: defaults off, must equal `true`.
 - `INVESTIGATOR_AI_DATA_POLICY`: `private_only` or `approved_external`.
-- `INVESTIGATOR_AI_PROVIDER`: `private_qwen` or `anthropic` for text/report drafting.
+- `INVESTIGATOR_AI_PROVIDER`: `private_qwen`, `private_open_weight` or `anthropic` for text/report drafting.
 - `INVESTIGATOR_AI_APPROVED_ORG_IDS`: exact organisation UUID allowlist.
 - `INVESTIGATOR_AI_APPROVED_EXTERNAL_PROVIDERS`: optional `anthropic,huggingface` allowlist; only effective in `approved_external`.
 - `QWEN_PRIVATE_GATEWAY_URL`: absolute gateway URL ending `/v1`.
 - `QWEN_PRIVATE_ALLOWED_HOST`: hostname (and nondefault port if applicable) that must match the gateway URL exactly.
 - `QWEN_PRIVATE_API_KEY`: secret held server-side only; required for private Qwen.
-- `QWEN_PRIVATE_MODEL`: exact model ID served by gateway.
+- `QWEN_PRIVATE_MODEL`: exact model ID served by Qwen gateway.
+- `PRIVATE_AI_GATEWAY_URL`, `PRIVATE_AI_ALLOWED_HOST`, `PRIVATE_AI_API_KEY`, `PRIVATE_AI_MODEL`: independently configured private OpenAI-compatible model backend (e.g. OpenAI gpt-oss or Mistral open-weight models). It has identical fixed-host and production TLS requirements.
 - `INVESTIGATOR_ANTHROPIC_MODEL`: optional model ID; existing Claude model remains default.
 
 In production, the private Qwen gateway must use HTTPS. Plain HTTP is permitted **only** to localhost/loopback during local development.

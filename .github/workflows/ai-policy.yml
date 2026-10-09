@@ -1,0 +1,36 @@
+name: AI gateway policy checks
+on:
+  pull_request:
+    paths:
+      - "investigator/src/lib/ai/**"
+      - "investigator/src/lib/actions/reports.tsx"
+      - "investigator/src/lib/actions/ai-evidence.ts"
+      - "investigator/scripts/ai-policy.test.mjs"
+      - "investigator/package.json"
+      - ".github/workflows/ai-policy.yml"
+  push:
+    branches: [main]
+    paths:
+      - "investigator/src/lib/ai/**"
+      - "investigator/src/lib/actions/reports.tsx"
+      - "investigator/src/lib/actions/ai-evidence.ts"
+      - "investigator/scripts/ai-policy.test.mjs"
+      - "investigator/package.json"
+
+jobs:
+  policy:
+    name: AI policy unit tests and typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: investigator
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: investigator/package-lock.json
+      - run: npm ci
+      - run: npm run test:ai-policy
+      - run: npx tsc --noEmit

@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { checkAndDeductCredits } from "@/lib/ai-credits";
 import { getCurrentProfile, logAudit } from "@/lib/actions/audit";
 import { createClient } from "@/lib/supabase/server";
+import { assertExternalAiAllowed } from "@/lib/ai/gateway";
 
 const HF_API_URL = "https://api-inference.huggingface.co/models";
 
@@ -39,6 +40,7 @@ export async function extractTextFromFile(fileId: string) {
   const profile = await getCurrentProfile();
   const supabase = await createClient();
   const file = await getEvidenceFile(fileId);
+  await assertExternalAiAllowed(file.case_id, "huggingface");
 
   if (file.ocr_text) return file.ocr_text;
   if (file.file_size > 10 * 1024 * 1024) throw new Error("OCR max file size is 10MB.");
@@ -88,6 +90,7 @@ export async function describeEvidenceImage(fileId: string) {
   const profile = await getCurrentProfile();
   const supabase = await createClient();
   const file = await getEvidenceFile(fileId);
+  await assertExternalAiAllowed(file.case_id, "anthropic");
 
   if (file.ai_description) return file.ai_description;
   if (!file.file_type.startsWith("image/")) throw new Error("Image description requires an image file.");
@@ -151,6 +154,7 @@ export async function transcribeAudio(fileId: string) {
   const profile = await getCurrentProfile();
   const supabase = await createClient();
   const file = await getEvidenceFile(fileId);
+  await assertExternalAiAllowed(file.case_id, "huggingface");
 
   if (file.transcription) return file.transcription;
   if (!file.file_type.startsWith("audio/") && !file.file_type.startsWith("video/")) {
@@ -193,6 +197,7 @@ export async function removeBackground(fileId: string) {
   const profile = await getCurrentProfile();
   const supabase = await createClient();
   const file = await getEvidenceFile(fileId);
+  await assertExternalAiAllowed(file.case_id, "huggingface");
 
   if (!file.file_type.startsWith("image/")) throw new Error("Background removal requires image/*.");
   if (file.file_size > 5 * 1024 * 1024) throw new Error("Background removal max file size is 5MB.");

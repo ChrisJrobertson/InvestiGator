@@ -1,6 +1,6 @@
 "use server";
 
-import Anthropic from "@anthropic-ai/sdk";
+import { generateInvestigationText } from "@/lib/ai/gateway";
 import { revalidatePath } from "next/cache";
 import {
   Document,
@@ -37,11 +37,6 @@ type ReportType =
   | "OSINT_INTELLIGENCE"
   | "INTERIM_UPDATE"
   | "EXECUTIVE_SUMMARY";
-
-type AnthropicResponseLike = {
-  content?: Array<{ type: string; text?: string }>;
-  usage?: { input_tokens?: number; output_tokens?: number };
-};
 
 const pdfStyles = StyleSheet.create({
   page: { padding: 32, fontSize: 10, color: "#111827" },
@@ -117,14 +112,6 @@ async function getCaseWithRelations(caseId: string): Promise<CaseWithRelations> 
   };
 }
 
-function extractTextFromAnthropicResponse(response: AnthropicResponseLike) {
-  return (response.content ?? [])
-    .filter((item) => item.type === "text")
-    .map((item) => item.text ?? "")
-    .join("\n\n")
-    .trim();
-}
-
 async function generateReportInternal(caseId: string, reportType: ReportType, parentReportId?: string) {
   const supabase = await createClient();
   const profile = await getCurrentProfile();
@@ -132,15 +119,12 @@ async function generateReportInternal(caseId: string, reportType: ReportType, pa
   const caseData = await getCaseWithRelations(caseId);
   const prompt = buildReportPrompt(reportType, caseData);
 
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  const aiResponse = await anthropic.messages.create({
-    model: "claude-sonnet-4-5",
-    max_tokens: 4000,
-    messages: [{ role: "user", content: prompt }],
+  const aiResponse = await generateInvestigationText({
+    caseId,
+    prompt,
+    maxTokens: 4000,
   });
-
-  const aiParsed = aiResponse as unknown as AnthropicResponseLike;
-  const content = extractTextFromAnthropicResponse(aiParsed);
+  const content = aiResponse.text;
 
   const { data: latestRows } = await supabase
     .from("reports")
@@ -163,9 +147,9 @@ async function generateReportInternal(caseId: string, reportType: ReportType, pa
     generated_at: new Date().toISOString(),
     generated_by: profile.id,
     generated_by_id: profile.id,
-    model_used: "claude-sonnet-4-5",
-    prompt_tokens: aiParsed.usage?.input_tokens ?? null,
-    completion_tokens: aiParsed.usage?.output_tokens ?? null,
+    model_used: aiResponse.model,
+    prompt_tokens: aiResponse.usage.input_tokens ?? null,
+    completion_tokens: aiResponse.usage.output_tokens ?? null,
   };
 
   const { data: inserted, error } = await supabase
@@ -179,7 +163,8 @@ async function generateReportInternal(caseId: string, reportType: ReportType, pa
     caseId,
     reportType,
     version,
-    model: "claude-sonnet-4-5",
+    model: aiResponse.model,
+    provider: aiResponse.provider,
   });
 
   revalidatePath(`/cases/${caseId}`);

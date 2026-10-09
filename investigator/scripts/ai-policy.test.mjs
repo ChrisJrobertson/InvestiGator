@@ -30,6 +30,14 @@ test("private-only allows approved tenant only, denies all external inference", 
   assert.throws(() => authoriseAi(policy, "org-a", "huggingface"), /prohibited/);
 });
 
+test("other privately deployed models use the same fail-closed policy", () => {
+  const policy = readAiPolicy({ ...base, INVESTIGATOR_AI_PROVIDER: "private_open_weight" });
+  assert.equal(policy.provider, "private_open_weight");
+  assert.doesNotThrow(() => authoriseAi(policy, "org-a", "private_open_weight"));
+  assert.throws(() => authoriseAi(policy, "org-b", "private_open_weight"), /organisation/);
+  assert.throws(() => authoriseAi(policy, "org-a", "anthropic"), /prohibited/);
+});
+
 test("external providers must each be explicitly allowlisted", () => {
   const policy = readAiPolicy({
     ...base,

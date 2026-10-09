@@ -9,7 +9,7 @@ import {
 export type InvestigationAiResult = {
   text: string;
   model: string;
-  provider: "private_qwen" | "anthropic";
+  provider: "private_qwen" | "private_open_weight" | "anthropic";
   usage: { input_tokens?: number; output_tokens?: number };
 };
 
@@ -49,16 +49,16 @@ export async function generateInvestigationText(args: {
   }
   const maxTokens = Math.min(Math.max(args.maxTokens ?? 4000, 1), 8000);
 
-  if (provider === "private_qwen") {
+  if (provider === "private_qwen" || provider === "private_open_weight") {
     // Server-side static destination. No case/user input may select an inference URL.
     const gateway = validatePrivateQwenUrl(
-      process.env.QWEN_PRIVATE_GATEWAY_URL,
-      process.env.QWEN_PRIVATE_ALLOWED_HOST,
+      (provider === "private_qwen" ? process.env.QWEN_PRIVATE_GATEWAY_URL : process.env.PRIVATE_AI_GATEWAY_URL),
+      (provider === "private_qwen" ? process.env.QWEN_PRIVATE_ALLOWED_HOST : process.env.PRIVATE_AI_ALLOWED_HOST),
       process.env.NODE_ENV === "production",
     );
-    const model = process.env.QWEN_PRIVATE_MODEL;
-    const apiKey = process.env.QWEN_PRIVATE_API_KEY;
-    if (!model || !apiKey) throw new Error("Private Qwen model credentials are not configured.");
+    const model = provider === "private_qwen" ? process.env.QWEN_PRIVATE_MODEL : process.env.PRIVATE_AI_MODEL;
+    const apiKey = provider === "private_qwen" ? process.env.QWEN_PRIVATE_API_KEY : process.env.PRIVATE_AI_API_KEY;
+    if (!model || !apiKey) throw new Error("Private model credentials are not configured.");
 
     const response = await fetch(new URL(gateway.pathname.replace(/\/$/, "") + "/chat/completions", gateway.origin), {
       method: "POST",
@@ -77,13 +77,13 @@ export async function generateInvestigationText(args: {
       signal: AbortSignal.timeout(90_000),
     });
     // Do not include provider response body or prompt in exception text/logs.
-    if (!response.ok) throw new Error("Private Qwen request failed (HTTP " + response.status + ").");
+    if (!response.ok) throw new Error("Private model request failed (HTTP " + response.status + ").");
     const body = (await response.json()) as {
       choices?: Array<{ message?: { content?: string } }>;
       usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
     const text = body.choices?.[0]?.message?.content?.trim();
-    if (!text) throw new Error("Private Qwen returned an empty response.");
+    if (!text) throw new Error("Private model returned an empty response.");
     return {
       text,
       model,

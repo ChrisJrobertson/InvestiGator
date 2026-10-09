@@ -1,4 +1,3 @@
-import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/actions/audit";
@@ -74,6 +73,7 @@ export async function generateInvestigationText(args: {
         messages: [{ role: "user", content: args.prompt }],
       }),
       cache: "no-store",
+      redirect: "error",
       signal: AbortSignal.timeout(90_000),
     });
     // Do not include provider response body or prompt in exception text/logs.
